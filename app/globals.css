@@ -295,6 +295,23 @@
   animation-delay: 0.4s;
 }
 
+.animation-delay-500 {
+  animation-delay: 0.5s;
+}
+
+@keyframes phone-float {
+  0%, 100% {
+    transform: translateY(0px);
+  }
+  50% {
+    transform: translateY(-12px);
+  }
+}
+
+.hero-phone-float {
+  animation: phone-float 5s ease-in-out infinite;
+}
+
 @keyframes float {
 
   0%,
