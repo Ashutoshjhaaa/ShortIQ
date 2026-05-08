@@ -78,6 +78,7 @@ async function uploadToStorage(
 
     if (error) throw new Error(`Storage upload failed (${bucket}/${path}): ${error.message}`);
 
+    // Always use public URL — signed URLs expire and Creatomate may render after expiry
     const { data } = supabaseAdmin.storage.from(bucket).getPublicUrl(path);
     return data.publicUrl;
 }
@@ -402,239 +403,100 @@ Expected Output Structure:
             throw new Error(`No scenes generated. Check Inngest logs for raw LLM response.`);
         }
 
-        const voice = await step.run("generate-voice", async () => {
-            // Robust case-insensitive lookup
-            const displayLang = series.language || "English";
-            const normalizedLang = displayLang.charAt(0).toUpperCase() + displayLang.slice(1).toLowerCase();
-            
-            const provider = series.model_name || getProvider(displayLang);
-            const langCode = series.model_lang_code || (LANGUAGE_CODES[normalizedLang] ?? LANGUAGE_CODES[displayLang] ?? displayLang);
-            
-            const internalVoiceId = series.voice_id;
-            const voiceOption = getVoiceById(internalVoiceId);
-            const actualVoiceId = voiceOption ? voiceOption.voiceId : internalVoiceId;
-            const script = scriptData.total_script;
-            const fileName = `${seriesId}-${Date.now()}.mp3`;
+        // Run voice and images in parallel to save time
+        const [voice, images] = await Promise.all([
+            step.run("generate-voice", async () => {
+                const displayLang = series.language || "English";
+                const normalizedLang = displayLang.charAt(0).toUpperCase() + displayLang.slice(1).toLowerCase();
+                const provider = series.model_name || getProvider(displayLang);
+                const langCode = series.model_lang_code || (LANGUAGE_CODES[normalizedLang] ?? LANGUAGE_CODES[displayLang] ?? displayLang);
+                const internalVoiceId = series.voice_id;
+                const voiceOption = getVoiceById(internalVoiceId);
+                const actualVoiceId = voiceOption ? voiceOption.voiceId : internalVoiceId;
+                const script = scriptData.total_script;
+                const fileName = `${seriesId}-${Date.now()}.mp3`;
 
-            console.log(`[Voice] Generating audio via ${provider} for language: "${displayLang}" (Code: "${langCode}")`);
+                let audioBuffer: ArrayBuffer;
+                let durationSeconds = 0;
 
-            let audioBuffer: ArrayBuffer;
-            let durationSeconds = 0;
+                if (provider === "deepgram") {
+                    audioBuffer = await generateDeepgramAudio(script, actualVoiceId);
+                    const metadata = await parseBuffer(Buffer.from(audioBuffer), 'audio/mpeg');
+                    durationSeconds = metadata.format.duration || parseDurationSeconds(series.video_duration);
+                } else {
+                    const result = await generateSarvamAudio(script, actualVoiceId, langCode);
+                    audioBuffer = result.buffer;
+                    durationSeconds = result.duration;
+                }
 
-            if (provider === "deepgram") {
-                audioBuffer = await generateDeepgramAudio(script, actualVoiceId);
-                const metadata = await parseBuffer(Buffer.from(audioBuffer), 'audio/mpeg');
-                durationSeconds = metadata.format.duration || parseDurationSeconds(series.video_duration);
-            } else {
-                const result = await generateSarvamAudio(script, actualVoiceId, langCode);
-                audioBuffer = result.buffer;
-                durationSeconds = result.duration;
-            }
+                const audioUrl = await uploadToStorage("video-audio", fileName, audioBuffer, "audio/mpeg");
+                if (durationSeconds <= 0) durationSeconds = parseDurationSeconds(series.video_duration);
+                return { audioUrl, durationSeconds };
+            }),
+            step.run("generate-images", async () => {
+                const falKey = process.env.FAL_API_KEY;
 
-            if (!audioBuffer) throw new Error(`Failed to generate audio via ${provider}`);
+                async function fetchImageUrl(prompt: string, i: number): Promise<string> {
+                    // 1. Try Fal.ai (fast, good quality)
+                    if (falKey) {
+                        try {
+                            const res = await fetch("https://fal.run/fal-ai/flux/schnell", {
+                                method: "POST",
+                                headers: { Authorization: `Key ${falKey}`, "Content-Type": "application/json" },
+                                body: JSON.stringify({ prompt, image_size: "portrait_4_3", num_images: 1 })
+                            });
+                            const data = await res.json();
+                            if (!res.ok) {
+                                console.warn(`[Image] Scene ${i + 1}: Fal.ai HTTP ${res.status}:`, JSON.stringify(data));
+                            } else {
+                                const url = data?.images?.[0]?.url;
+                                if (url && typeof url === "string" && url.startsWith("http")) {
+                                    console.log(`[Image] Scene ${i + 1}: Fal.ai succeeded → ${url}`);
+                                    return url;
+                                }
+                                console.warn(`[Image] Scene ${i + 1}: Fal.ai returned no URL. Response:`, JSON.stringify(data));
+                            }
+                        } catch (e) {
+                            console.warn(`[Image] Scene ${i + 1}: Fal.ai exception:`, e);
+                        }
+                    }
 
-            const audioUrl = await uploadToStorage("video-audio", fileName, audioBuffer, "audio/mpeg");
-            if (durationSeconds <= 0) durationSeconds = parseDurationSeconds(series.video_duration);
-            
-            console.log(`[Voice] Audio uploaded: ${audioUrl} (Duration: ${durationSeconds}s)`);
-            return { audioUrl, durationSeconds };
-        });
+                    // 2. Fallback: Pollinations (free, no key needed - do NOT use HEAD, just return the URL directly)
+                    const pollinationsUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=576&height=1024&nologo=true&seed=${Date.now() + i}`;
+                    console.log(`[Image] Scene ${i + 1}: Using Pollinations fallback → ${pollinationsUrl}`);
+                    return pollinationsUrl;
+                }
+
+                const imagePromises = scriptData.scenes.map(async (scene, i) => {
+                    try {
+                        const tempUrl = await fetchImageUrl(scene.image_prompt, i);
+                        const imageRes = await fetch(tempUrl);
+                        if (!imageRes.ok) throw new Error(`Image fetch failed: ${imageRes.status}`);
+                        const buffer = Buffer.from(await imageRes.arrayBuffer());
+                        if (buffer.length < 1000) throw new Error(`Image too small (${buffer.length} bytes), likely an error page`);
+                        const fileName = `${seriesId}/scene-${i + 1}-${Date.now()}.jpg`;
+                        const storedUrl = await uploadToStorage("video-images", fileName, buffer, "image/jpeg");
+                        console.log(`[Image] Scene ${i + 1} stored: ${storedUrl}`);
+                        return storedUrl;
+                    } catch (err: any) {
+                        console.error(`[Image] Scene ${i + 1} FAILED:`, err.message);
+                        return null;
+                    }
+                });
+
+                const urls = await Promise.all(imagePromises);
+                const imageUrls = urls.filter((u): u is string => u !== null);
+                console.log(`[Images] ${imageUrls.length}/${scriptData.scenes.length} images generated successfully`);
+                if (imageUrls.length === 0) throw new Error("No images generated — Pollinations also failed, check network access");
+                return { imageUrls };
+            })
+        ]);
 
         const captions = await step.run("generate-captions", async () => {
             const srtContent = await generateGroqWhisperCaptions(voice.audioUrl, series.language, voice.durationSeconds);
             const fileName = `${seriesId}-${Date.now()}.srt`;
             const captionsUrl = await uploadToStorage("video-captions", fileName, Buffer.from(srtContent, "utf-8"), "text/plain");
             return { captionsUrl };
-        });
-
-        const images = await step.run("generate-images", async () => {
-            const imageUrls: string[] = [];
-            const leonardoKey = process.env.LEONARDO_API_KEY;
-
-            async function generateWithLeonardo(prompt: string): Promise<string> {
-                if (!leonardoKey) throw new Error("LEONARDO_API_KEY not set");
-
-                const genRes = await fetch("https://cloud.leonardo.ai/api/rest/v1/generations", {
-                    method: "POST",
-                    headers: { 
-                        Authorization: `Bearer ${leonardoKey}`, 
-                        "Content-Type": "application/json", 
-                        Accept: "application/json" 
-                    },
-                    body: JSON.stringify({ 
-                        prompt, 
-                        modelId: "6b645e3a-d64f-4341-a6d8-7a3690fbf042", 
-                        width: 576, 
-                        height: 1024, 
-                        num_images: 1 
-                    })
-                });
-                if (!genRes.ok) {
-                    const err = await genRes.text();
-                    throw new Error(`Leonardo failed (${genRes.status}): ${err}`);
-                }
-                const genData = await genRes.json();
-                const generationId = genData?.sdGenerationJob?.generationId;
-                if (!generationId) throw new Error("No generationId returned from Leonardo");
-
-                const deadline = Date.now() + 2 * 60 * 1000;
-                while (Date.now() < deadline) {
-                    await new Promise(r => setTimeout(r, 3000));
-                    const pollRes = await fetch(`https://cloud.leonardo.ai/api/rest/v1/generations/${generationId}`, { 
-                        headers: { Authorization: `Bearer ${leonardoKey}`, Accept: "application/json" } 
-                    });
-                    if (!pollRes.ok) continue;
-
-                    const pollData = await pollRes.json();
-                    const status = pollData?.generations_by_pk?.status;
-                    const imgs = pollData?.generations_by_pk?.generated_images;
-                    if (status === "COMPLETE" && imgs?.length > 0) return imgs[0].url;
-                    if (status === "FAILED") throw new Error("Leonardo generation failed");
-                }
-                throw new Error("Leonardo timeout after 2 minutes");
-            }
-
-            async function generateWithPollinations(prompt: string): Promise<string> {
-                // Fixed URL format for Pollinations
-                const url = `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=512&height=768&nologo=true&seed=${Date.now()}`;
-                const res = await fetch(url);
-                if (!res.ok) throw new Error(`Pollinations failed (${res.status})`);
-                return url;
-            }
-
-            async function generateWithFal(prompt: string): Promise<string> {
-                const falKey = process.env.FAL_API_KEY;
-                if (!falKey) throw new Error("FAL_API_KEY not set");
-
-                console.log(`[Fal.ai] Starting generation for prompt: "${prompt.substring(0, 50)}..."`);
-                
-                const response = await fetch("https://fal.run/fal-ai/flux/schnell", {
-                    method: "POST",
-                    headers: {
-                        Authorization: `Key ${falKey}`,
-                        "Content-Type": "application/json",
-                    },
-                    body: JSON.stringify({
-                        prompt,
-                        image_size: "portrait_4_3",
-                        num_images: 1,
-                    })
-                });
-
-                if (!response.ok) {
-                    const err = await response.text();
-                    console.error(`[Fal.ai] API failed: ${response.status} ${err}`);
-                    throw new Error(`Fal.ai failed (${response.status})`);
-                }
-
-                const result = await response.json();
-                if (result.images && result.images.length > 0) {
-                    console.log(`[Fal.ai] Generation successful: ${result.images[0].url}`);
-                    return result.images[0].url;
-                }
-                throw new Error("Fal.ai returned no images");
-            }
-
-            async function generateWithAIHorde(prompt: string): Promise<string> {
-                console.log(`[AI Horde] Starting generation for prompt: "${prompt.substring(0, 50)}..."`);
-                const apiKey = process.env.AI_HORDE_API_KEY || "0000000000";
-                
-                const response = await fetch("https://aihorde.net/api/v2/generate/async", {
-                    method: "POST",
-                    headers: {
-                        "apikey": apiKey,
-                        "Content-Type": "application/json",
-                        "Client-Agent": "ShortIQ:1.0:unknown"
-                    },
-                    body: JSON.stringify({
-                        prompt,
-                        params: {
-                            n: 1,
-                            steps: 20,
-                            width: 512, // More standard size
-                            height: 768,
-                            sampler_name: "k_euler_a",
-                            cfg_scale: 7
-                        }
-                    })
-                });
-
-                if (!response.ok) {
-                    const err = await response.text();
-                    console.error(`[AI Horde] Initiation failed: ${response.status} ${err}`);
-                    throw new Error(`AI Horde initiation failed: ${response.status}`);
-                }
-
-                const { id, message } = await response.json();
-                if (message) console.log(`[AI Horde] Message: ${message}`);
-                console.log(`[AI Horde] Job ID: ${id}`);
-                
-                const deadline = Date.now() + 5 * 60 * 1000; // 5 mins
-                while (Date.now() < deadline) {
-                    await new Promise(r => setTimeout(r, 5000));
-                    const checkRes = await fetch(`https://aihorde.net/api/v2/generate/check/${id}`);
-                    if (!checkRes.ok) {
-                        console.warn(`[AI Horde] Check failed: ${checkRes.status}`);
-                        continue;
-                    }
-
-                    const checkData = await checkRes.json();
-                    console.log(`[AI Horde] Status: done=${checkData.done}, wait=${checkData.wait_time}s, queue=${checkData.queue_position}`);
-                    
-                    if (checkData.done) {
-                        const statusRes = await fetch(`https://aihorde.net/api/v2/generate/status/${id}`);
-                        if (!statusRes.ok) throw new Error("Failed to fetch AI Horde status");
-                        const statusData = await statusRes.json();
-                        const generations = statusData.generations;
-                        if (generations && generations.length > 0) {
-                            console.log(`[AI Horde] Generation successful: ${generations[0].img}`);
-                            return generations[0].img;
-                        }
-                        throw new Error("AI Horde returned no images");
-                    }
-                }
-                throw new Error("AI Horde timeout");
-            }
-
-            for (const [i, scene] of scriptData.scenes.entries()) {
-                let tempUrl: string | null = null;
-                let usedProvider = "unknown";
-
-                try {
-                    console.log(`[Image] Scene ${i + 1}: trying Leonardo.AI...`);
-                    tempUrl = await generateWithLeonardo(scene.image_prompt);
-                    usedProvider = "Leonardo.AI";
-                } catch (err: any) {
-                    console.warn(`[Image] Scene ${i + 1}: Leonardo failed (${err.message}), falling back to Fal.ai...`);
-                    try {
-                        tempUrl = await generateWithFal(scene.image_prompt);
-                        usedProvider = "Fal.ai";
-                    } catch (fErr: any) {
-                        console.warn(`[Image] Scene ${i + 1}: Fal.ai failed (${fErr.message}), falling back to AI Horde...`);
-                        try {
-                            tempUrl = await generateWithAIHorde(scene.image_prompt);
-                            usedProvider = "AI Horde";
-                        } catch (hErr: any) {
-                            console.warn(`[Image] Scene ${i + 1}: AI Horde failed (${hErr.message}), falling back to Pollinations...`);
-                            try {
-                                tempUrl = await generateWithPollinations(scene.image_prompt);
-                                usedProvider = "Pollinations.ai";
-                            } catch (pErr: any) {
-                                throw new Error(`All providers (Leonardo, Fal, AI Horde, Pollinations) failed for scene ${i + 1}: ${pErr.message}`);
-                            }
-                        }
-                    }
-                }
-
-                const imageRes = await fetch(tempUrl!);
-                const buffer = Buffer.from(await imageRes.arrayBuffer());
-                const fileName = `${seriesId}/scene-${i + 1}-${Date.now()}.jpg`;
-                const url = await uploadToStorage("video-images", fileName, buffer, "image/jpeg");
-                
-                console.log(`[Image] Scene ${i + 1} uploaded via ${usedProvider}: ${url}`);
-                imageUrls.push(url);
-            }
-            return { imageUrls };
         });
 
         await step.run("save-everything", async () => {

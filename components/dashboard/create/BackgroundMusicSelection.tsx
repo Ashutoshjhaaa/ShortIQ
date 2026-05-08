@@ -13,27 +13,27 @@ const TRACKS: Track[] = [
     {
         id: "trending-reels",
         name: "Trending Instagram Reels",
-        url: "https://ik.imagekit.io/sthortIQ/BgMusic/trending-instagram-reels-music-447249.mp3",
+        url: "https://ik.imagekit.io/shortiq/BgMusic/trending-instagram-reels-music-447249.mp3",
     },
     {
         id: "basketball",
         name: "Basketball Vibes",
-        url: "https://ik.imagekit.io/sthortIQ/BgMusic/basketball-instagram-reels-music-461852.mp3",
+        url: "https://ik.imagekit.io/shortiq/BgMusic/basketball-instagram-reels-music-461852.mp3",
     },
     {
         id: "marketing-v1",
         name: "Marketing & Promo v1",
-        url: "https://ik.imagekit.io/sthortIQ/BgMusic/instagram-reels-marketing-music-384448.mp3",
+        url: "https://ik.imagekit.io/shortiq/BgMusic/instagram-reels-marketing-music-384448.mp3",
     },
     {
         id: "marketing-v2",
         name: "Marketing & Promo v2",
-        url: "https://ik.imagekit.io/sthortIQ/BgMusic/instagram-reels-marketing-music-469052.mp3",
+        url: "https://ik.imagekit.io/shortiq/BgMusic/instagram-reels-marketing-music-469052.mp3",
     },
     {
         id: "hip-hop-jazz",
         name: "Dramatic Hip Hop Jazz",
-        url: "https://ik.imagekit.io/sthortIQ/BgMusic/dramatic-hip-hop-music-background-jazz-music-for-short-video-148505.mp3",
+        url: "https://ik.imagekit.io/shortiq/BgMusic/dramatic-hip-hop-music-background-jazz-music-for-short-video-148505.mp3",
     },
 ];
 

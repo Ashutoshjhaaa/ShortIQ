@@ -14,14 +14,19 @@ export function VideoPreviewModal({ video, isOpen, onClose }: VideoPreviewModalP
     const [isLoading, setIsLoading] = useState(true);
     const [isPlaying, setIsPlaying] = useState(false);
     const [isMuted, setIsMuted] = useState(false); // Default to unmuted for "Full Screen" preview
+    const [hasError, setHasError] = useState(false);
     const videoRef = useRef<HTMLVideoElement>(null);
 
     const videoUrl = (video as any).video_url;
 
     useEffect(() => {
+        setHasError(false);
         if (isOpen && videoRef.current && videoUrl) {
-            videoRef.current.play().catch(() => {
+            videoRef.current.play().catch((err) => {
+                console.error("Video play error:", err);
                 setIsPlaying(false);
+                setIsLoading(false);
+                setHasError(true);
             });
         }
     }, [isOpen, videoUrl]);
@@ -77,12 +82,40 @@ export function VideoPreviewModal({ video, isOpen, onClose }: VideoPreviewModalP
                                 onLoadedData={() => {
                                     setIsLoading(false);
                                     setIsPlaying(true);
+                                    setHasError(false);
+                                }}
+                                onError={(e) => {
+                                    console.error("Video element error:", e);
+                                    setIsLoading(false);
+                                    setHasError(true);
                                 }}
                                 onClick={togglePlay}
                                 onPlay={() => setIsPlaying(true)}
                                 onPause={() => setIsPlaying(false)}
-                                className={`w-full h-full object-cover sm:object-contain transition-opacity duration-700 ${isLoading ? 'opacity-0' : 'opacity-100'}`}
+                                className={`w-full h-full object-cover sm:object-contain transition-opacity duration-700 ${isLoading || hasError ? 'opacity-0' : 'opacity-100'}`}
                             />
+                            {hasError && (
+                                <div className="absolute inset-0 flex flex-col items-center justify-center gap-6 text-white z-20 p-10 text-center">
+                                    <div className="w-20 h-20 rounded-full bg-rose-500/10 border border-rose-500/20 flex items-center justify-center text-rose-500">
+                                        <X size={40} />
+                                    </div>
+                                    <div className="space-y-2">
+                                        <h3 className="text-xl font-black uppercase tracking-widest">Playback Failed</h3>
+                                        <p className="text-white/40 text-xs max-w-[280px] leading-relaxed mx-auto uppercase tracking-tighter">
+                                            The video source could not be loaded. This might be due to a broken link or an unsupported format.
+                                        </p>
+                                        <div className="mt-4">
+                                            <a 
+                                                href={videoUrl} 
+                                                target="_blank" 
+                                                className="text-[10px] text-indigo-400 font-bold uppercase tracking-widest hover:underline"
+                                            >
+                                                Try opening directly
+                                            </a>
+                                        </div>
+                                    </div>
+                                </div>
+                            )}
                         </>
                     ) : (
                         <div className="flex flex-col items-center justify-center text-center p-12 space-y-6">
