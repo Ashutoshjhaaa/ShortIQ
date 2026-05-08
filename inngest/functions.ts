@@ -298,6 +298,19 @@ export const generateVideo = inngest.createFunction(
         });
 
         const videoProjectId = await step.run("create-video-placeholder", async () => {
+            // Check if a video is already generating/rendering for this series to prevent duplicates
+            const { data: existing } = await supabaseAdmin
+                .from("video_projects")
+                .select("id")
+                .eq("series_id", seriesId)
+                .in("status", ["generating", "rendering"])
+                .maybeSingle();
+
+            if (existing?.id) {
+                console.log(`[Video] Reusing existing in-progress project: ${existing.id}`);
+                return existing.id;
+            }
+
             const { data, error } = await supabaseAdmin
                 .from("video_projects")
                 .insert({

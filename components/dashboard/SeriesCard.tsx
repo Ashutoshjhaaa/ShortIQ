@@ -102,11 +102,13 @@ export function SeriesCard({ series, onRefresh }: SeriesCardProps) {
     };
 
     const handleGenerate = async () => {
+        if (isLoading) return; // Prevent double-click
+        if (!confirm(`Generate a new video for "${series.series_name}"?`)) return;
         setIsLoading(true);
         try {
             const res = await triggerVideoGeneration(series.id);
             if (res.success) {
-                toast.success("Generation started!");
+                toast.success("Generation started! Redirecting to videos...");
                 router.push("/dashboard/videos");
             } else {
                 toast.error(res.error || "Failed to start generation");
