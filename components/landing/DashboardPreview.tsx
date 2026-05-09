@@ -28,22 +28,31 @@ export default function DashboardPreview() {
                                         <h3 className="text-sm font-[800] text-gray-900 dark:text-white tracking-tight uppercase">Generation Timeline</h3>
                                         <div className="px-3 py-1 bg-primary/10 text-primary text-[10px] font-black rounded-full uppercase tracking-tighter">AI Active</div>
                                     </div>
-                                    <div className="flex items-center gap-4">
-                                        {[1, 2, 3, 4, 5].map((i) => (
-                                            <div key={i} className={`flex-1 aspect-video rounded-xl border border-gray-100 dark:border-white/10 overflow-hidden relative group cursor-pointer ${i === 3 ? 'ring-2 ring-primary shadow-lg scale-105' : 'opacity-40 hover:opacity-100 transition-opacity'}`}>
-                                                <div className="absolute inset-0 bg-gray-900" />
-                                                {i === 3 && (
-                                                    <div className="absolute inset-0 bg-primary/20 flex items-center justify-center">
-                                                        <div className="w-8 h-8 rounded-full bg-primary flex items-center justify-center">
-                                                            <div className="w-0 h-0 border-l-[6px] border-l-white border-y-[4px] border-y-transparent ml-1" />
-                                                        </div>
-                                                    </div>
-                                                )}
-                                                <div className="absolute bottom-2 left-2 right-2 h-1 bg-white/20 rounded-full overflow-hidden">
-                                                    <div className={`h-full bg-primary ${i === 3 ? 'w-[75%]' : 'w-0'}`} />
-                                                </div>
+                                    <div className="relative aspect-video rounded-3xl border-2 border-primary/20 overflow-hidden group shadow-2xl">
+                                        <video
+                                            src="/ai-video.mp4"
+                                            autoPlay
+                                            loop
+                                            muted
+                                            playsInline
+                                            className="absolute inset-0 w-full h-full object-cover"
+                                        />
+                                        <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-500" />
+                                        <div className="absolute bottom-6 left-6 right-6 flex items-center gap-4 opacity-0 group-hover:opacity-100 transition-all duration-500 translate-y-4 group-hover:translate-y-0">
+                                            <div className="flex-1 h-1.5 bg-white/20 rounded-full overflow-hidden backdrop-blur-md">
+                                                <div className="h-full bg-primary w-[65%] animate-pulse" />
                                             </div>
-                                        ))}
+                                            <div className="text-[10px] font-black text-white uppercase tracking-widest whitespace-nowrap bg-black/40 px-3 py-1 rounded-full backdrop-blur-md border border-white/10">
+                                                Generating Clips... 65%
+                                            </div>
+                                        </div>
+                                        
+                                        {/* Premium Play Button Overlay */}
+                                        <div className="absolute inset-0 flex items-center justify-center">
+                                            <div className="w-16 h-16 rounded-full bg-primary/90 flex items-center justify-center shadow-[0_0_50px_rgba(var(--primary),0.5)] backdrop-blur-sm border-2 border-white/20 scale-90 group-hover:scale-100 transition-transform duration-500">
+                                                <div className="w-0 h-0 border-l-[12px] border-l-white border-y-[8px] border-y-transparent ml-2" />
+                                            </div>
+                                        </div>
                                     </div>
                                 </div>
 
