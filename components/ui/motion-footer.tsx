@@ -5,6 +5,7 @@ import { useEffect, useRef } from "react";
 import { gsap } from "gsap";
 import { ScrollTrigger } from "gsap/ScrollTrigger";
 import { cn } from "@/lib/utils";
+import BrandLogo from "@/components/ui/BrandLogo";
 
 // Register ScrollTrigger safely for React
 if (typeof window !== "undefined") {
@@ -404,28 +405,7 @@ export function CinematicFooter() {
                 <div className="lg:col-span-2 flex flex-col justify-between">
                   <div>
                     <div className="flex items-center gap-2 mb-3">
-                      <div className="flex items-center justify-center rounded-xl transition-all">
-                        <svg width="32" height="32" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" className="hover:animate-pulse">
-                          <rect width="24" height="24" rx="6" fill="url(#motion_footer_rose)" />
-                          <path d="M18 5H6" stroke="white" strokeWidth="1.5" strokeLinecap="round" />
-                          <path d="M9 12H6" stroke="white" strokeWidth="1.5" strokeLinecap="round" />
-                          <path d="M9 19H6" stroke="white" strokeWidth="1.5" strokeLinecap="round" />
-                          <path
-                            d="M13 12.003a0.7 0.7 0 0 1 1.062-.597l3.498 2.098a0.7 0.7 0 0 1 0 1.203l-3.498 2.098a0.7 0.7 0 0 1-1.062-.598z"
-                            fill="white"
-                          />
-                          <defs>
-                            <linearGradient id="motion_footer_rose" x1="0" y1="0" x2="24" y2="24" gradientUnits="userSpaceOnUse">
-                              <stop stopColor="#fb7185">
-                                <animate attributeName="stop-color" values="#fb7185; #fda4af; #fb7185" dur="3s" repeatCount="indefinite" />
-                              </stop>
-                              <stop offset="1" stopColor="#e11d48">
-                                <animate attributeName="stop-color" values="#e11d48; #be123c; #e11d48" dur="3s" repeatCount="indefinite" />
-                              </stop>
-                            </linearGradient>
-                          </defs>
-                        </svg>
-                      </div>
+                      <BrandLogo size={26} withGlow className="hover:scale-105 transition-transform" />
                       <span className="text-xl font-bold tracking-tight">
                         Short<span className="text-primary">IQ</span>
                       </span>

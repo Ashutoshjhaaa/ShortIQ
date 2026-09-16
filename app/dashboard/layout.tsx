@@ -4,6 +4,7 @@ import { useState, useEffect } from "react";
 import { useUser, useClerk } from "@clerk/nextjs";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import BrandLogo from "@/components/ui/BrandLogo";
 import {
     LayoutDashboard,
     PlusCircle,
@@ -58,18 +59,7 @@ export default function DashboardLayout({
                 {/* Sidebar Header: Logo & Overview */}
                 <div className="mb-8">
                     <Link href="/" className="flex items-center gap-3 mb-6 group" onClick={() => setIsMobileMenuOpen(false)}>
-                        <div className="flex items-center justify-center rounded-xl transition-all">
-                            <svg width="32" height="32" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" className="group-hover:animate-pulse">
-                                <rect width="24" height="24" rx="6" fill="var(--brand-primary)" />
-                                <path d="M18 5H6" stroke="white" strokeWidth="1.5" strokeLinecap="round" />
-                                <path d="M9 12H6" stroke="white" strokeWidth="1.5" strokeLinecap="round" />
-                                <path d="M9 19H6" stroke="white" strokeWidth="1.5" strokeLinecap="round" />
-                                <path
-                                    d="M13 12.003a0.7 0.7 0 0 1 1.062-.597l3.498 2.098a0.7 0.7 0 0 1 0 1.203l-3.498 2.098a0.7 0.7 0 0 1-1.062-.598z"
-                                    fill="white"
-                                />
-                            </svg>
-                        </div>
+                        <BrandLogo size={28} withGlow className="group-hover:scale-105 transition-transform" />
                         <span className="text-2xl font-bold tracking-tight text-gray-900 dark:text-white">
                             Short<span className="text-primary">IQ</span>
                         </span>
