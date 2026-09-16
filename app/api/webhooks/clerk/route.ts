@@ -1,12 +1,7 @@
 import { Webhook } from 'svix'
 import { headers } from 'next/headers'
 import { WebhookEvent } from '@clerk/nextjs/server'
-import { createClient } from "@supabase/supabase-js"
-
-const supabaseAdmin = createClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.SUPABASE_SERVICE_ROLE_KEY!
-)
+import { supabaseAdmin } from "@/lib/supabase"
 
 export async function POST(req: Request) {
     const SIGNING_SECRET = process.env.CLERK_WEBHOOK_SECRET
@@ -57,20 +52,38 @@ export async function POST(req: Request) {
     if (eventType === 'user.created' || eventType === 'user.updated') {
         const { id, first_name, last_name, email_addresses, image_url } = evt.data
         const email = email_addresses[0]?.email_address
-        const name = `${first_name || ''} ${last_name || ''}`.trim() || email.split('@')[0]
+        const name = `${first_name || ''} ${last_name || ''}`.trim() || email?.split('@')[0] || ''
 
-        // Sync with your 'profiles' or 'users' table in Supabase if you have one
-        // For now, let's just log it or upsert into a public.users table if it exists
-        const { error } = await supabaseAdmin.from('users').upsert({
-            id: id,
-            email: email,
-            name: name,
-            image_url: image_url,
-            updated_at: new Date().toISOString(),
-        })
+        // Upsert into 'profiles' table (matches supabase_schema.sql)
+        // user_id = Clerk User ID, id = auto-generated UUID
+        const { error } = await supabaseAdmin.from('profiles').upsert(
+            {
+                user_id: id,
+                email: email,
+                full_name: name,
+                avatar_url: image_url,
+                updated_at: new Date().toISOString(),
+            },
+            { onConflict: 'user_id' }
+        )
 
         if (error) {
-            console.error('Error syncing user to Supabase:', error)
+            console.error('Error syncing user to Supabase profiles:', error)
+        }
+    }
+
+    if (eventType === 'user.deleted') {
+        const { id } = evt.data
+        if (id) {
+            // Delete user profile and let CASCADE handle related data
+            const { error } = await supabaseAdmin
+                .from('profiles')
+                .delete()
+                .eq('user_id', id)
+
+            if (error) {
+                console.error('Error deleting user profile from Supabase:', error)
+            }
         }
     }
 

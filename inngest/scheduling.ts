@@ -1,19 +1,24 @@
 import { inngest } from "./client";
 import { supabaseAdmin } from "@/lib/supabase";
+import { clerkClient } from "@clerk/nextjs/server";
 import { plunk } from "@/lib/plunk";
 import { buildVideoReadyEmail } from "@/lib/email-templates";
 
 /**
  * Hourly cron job that checks for scheduled series and triggers their daily workflow.
+ * Now includes a publish-time window check to reduce unnecessary invocations.
  */
 export const seriesScheduler = inngest.createFunction(
     { id: "series-scheduler", name: "Series Scheduler" },
     { cron: "0 * * * *" }, // Run every hour
     async ({ step }) => {
+        const now = new Date();
+        const currentHour = now.getUTCHours();
+
         // Fetch all active series
         const { data: activeSeries, error } = await supabaseAdmin
             .from("series")
-            .select("id")
+            .select("id, publish_time")
             .eq("status", "active");
 
         if (error) {
@@ -25,15 +30,28 @@ export const seriesScheduler = inngest.createFunction(
             return { message: "No active series found." };
         }
 
-        // Send a daily workflow event for each active series
-        const events = activeSeries.map((s) => ({
-            name: "series/daily-workflow",
+        // Only trigger workflows for series whose publish time is within the next 3 hours
+        // This avoids triggering all series 24 times/day
+        const relevantSeries = activeSeries.filter((s) => {
+            if (!s.publish_time) return false;
+            const [pubHour] = s.publish_time.split(":").map(Number);
+            const hoursUntilPublish = (pubHour - currentHour + 24) % 24;
+            return hoursUntilPublish <= 3; // Trigger if publish is within 3 hours
+        });
+
+        if (relevantSeries.length === 0) {
+            return { message: `No series scheduled within the next 3 hours (current UTC hour: ${currentHour}).` };
+        }
+
+        // Send a daily workflow event for each relevant series
+        const events = relevantSeries.map((s) => ({
+            name: "series/daily-workflow" as const,
             data: { seriesId: s.id },
         }));
 
         await step.sendEvent("trigger-daily-workflows", events);
 
-        return { count: activeSeries.length };
+        return { total: activeSeries.length, triggered: relevantSeries.length };
     }
 );
 
@@ -119,25 +137,37 @@ export const dailyWorkflow = inngest.createFunction(
                     .single();
 
                 if (video && plunk) {
-                    const { data: userData } = await supabaseAdmin.auth.admin.getUserById(series.user_id);
-                    if (userData?.user?.email) {
-                        const emailHtml = buildVideoReadyEmail({
-                            userName: userData.user.user_metadata?.full_name || userData.user.user_metadata?.name || userData.user.email.split("@")[0],
-                            videoTitle: video.title || series.series_name,
-                            thumbnailUrl: video.image_urls?.[0],
-                            videoUrl: video.video_url,
-                            niche: series.niche,
-                            duration: series.video_duration,
-                            language: series.language,
-                            appUrl: process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000",
-                            videoProjectId: video.id,
-                        });
-                        await plunk.emails.send({
-                            to: userData.user.email,
-                            subject: `Your scheduled video is ready: ${series.series_name}`,
-                            body: emailHtml,
-                        });
-                        results.push("Email sent via Plunk");
+                    // Use Clerk API to get user email (not Supabase Auth)
+                    try {
+                        const clerk = await clerkClient();
+                        const user = await clerk.users.getUser(series.user_id);
+                        const userEmail = user.emailAddresses[0]?.emailAddress;
+                        const userName = user.firstName
+                            ? `${user.firstName} ${user.lastName || ""}`.trim()
+                            : userEmail?.split("@")[0] || "User";
+
+                        if (userEmail) {
+                            const emailHtml = buildVideoReadyEmail({
+                                userName,
+                                videoTitle: video.title || series.series_name,
+                                thumbnailUrl: video.image_urls?.[0],
+                                videoUrl: video.video_url,
+                                niche: series.niche,
+                                duration: series.video_duration,
+                                language: series.language,
+                                appUrl: process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000",
+                                videoProjectId: video.id,
+                            });
+                            await plunk.emails.send({
+                                to: userEmail,
+                                subject: `Your scheduled video is ready: ${series.series_name}`,
+                                body: emailHtml,
+                            });
+                            results.push("Email sent via Plunk");
+                        }
+                    } catch (emailErr: any) {
+                        console.error("[PUBLISH] Email error:", emailErr.message);
+                        results.push(`Email failed: ${emailErr.message}`);
                     }
                 }
             }

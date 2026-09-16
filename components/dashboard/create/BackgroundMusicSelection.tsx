@@ -64,18 +64,8 @@ export function BackgroundMusicSelection({
         }
 
         try {
-            // Check if URL is reachable first
-            const response = await fetch(url, { method: 'HEAD' }).catch(() => null);
-
-            if (response && !response.ok) {
-                throw new Error(`Track is currently unavailable (HTTP ${response.status})`);
-            }
-
             const audio = new Audio(url);
             audioRef.current = audio;
-
-            await audio.play();
-            setPlayingTrack(trackId);
 
             audio.onended = () => {
                 setPlayingTrack(null);
@@ -85,6 +75,9 @@ export function BackgroundMusicSelection({
                 setAudioError("Failed to load audio source. The link might be broken.");
                 setPlayingTrack(null);
             };
+
+            await audio.play();
+            setPlayingTrack(trackId);
 
         } catch (err: unknown) {
             const msg = err instanceof Error ? err.message : "Could not play track";

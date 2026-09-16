@@ -2,6 +2,7 @@
 
 import { auth } from "@/lib/clerk-server";
 import { supabaseAdmin } from "@/lib/supabase";
+import { clerkClient } from "@clerk/nextjs/server";
 
 export async function getUserProfile() {
     const { userId } = await auth();
@@ -11,12 +12,12 @@ export async function getUserProfile() {
         const { data, error } = await supabaseAdmin
             .from("profiles")
             .select("*")
-            .eq("id", userId)
+            .eq("user_id", userId)
             .single();
 
         if (error) {
             console.warn("Could not fetch user profile:", error.message);
-            return { id: userId, credits: 0 }; // Fallback
+            return { user_id: userId, billing_plan: "free" }; // Fallback
         }
         return data;
     } catch (err) {
@@ -29,13 +30,16 @@ export async function deleteUserAccount() {
     if (!userId) return { success: false, error: "Unauthorized" };
 
     try {
-        // 1. Delete user from auth.users (Cascades to series, video_projects, etc. if set up correctly)
-        // Note: For full safety, we should delete related data explicitly if not cascading
-        const { error: deleteAuthError } = await supabaseAdmin.auth.admin.deleteUser(userId);
-        if (deleteAuthError) throw deleteAuthError;
+        // 1. Delete related data from Supabase (series will cascade to video_projects)
+        await supabaseAdmin.from("social_accounts").delete().eq("user_id", userId);
+        await supabaseAdmin.from("series").delete().eq("user_id", userId);
+        await supabaseAdmin.from("profiles").delete().eq("user_id", userId);
 
-        // Note: Next.js server actions can't easily logout the user *and* redirect in one go cleanly if session is destroyed.
-        // We'll return success and let the client handle signOut().
+        // 2. Delete user from Clerk (the actual auth provider)
+        const clerk = await clerkClient();
+        await clerk.users.deleteUser(userId);
+
+        // Note: Client should handle signOut() and redirect after this succeeds
         return { success: true };
     } catch (err: any) {
         console.error("deleteUserAccount failure:", err);

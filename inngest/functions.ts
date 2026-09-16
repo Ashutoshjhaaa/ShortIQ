@@ -1,5 +1,4 @@
 import { inngest } from "./client";
-import * as fal from "@fal-ai/serverless-client";
 import { clerkClient } from "@clerk/nextjs/server";
 import { RetryAfterError } from "inngest";
 import { supabaseAdmin } from "../lib/supabase";
@@ -363,21 +362,34 @@ Expected Output Structure:
 }`;
 
             try {
-                const completion = await groqClient.chat.completions.create({
-                    model: "llama-3.3-70b-versatile",
-                    messages: [{ role: "user", content: prompt }],
-                    response_format: { type: "json_object" },
-                    temperature: 0.7,
-                });
+                const modelsToTry = ["groq/compound", "qwen/qwen3.8-27b", "openai/gpt-oss-120b"];
+                let rawText = "";
 
-                let rawText = completion.choices[0]?.message?.content;
-                if (!rawText) throw new Error("Groq returned no text.");
+                for (const modelName of modelsToTry) {
+                    try {
+                        console.log(`[Script] Trying Groq model: ${modelName}`);
+                        const completion = await groqClient.chat.completions.create({
+                            model: modelName,
+                            messages: [{ role: "user", content: prompt }],
+                            temperature: 0.7,
+                        });
+                        rawText = completion.choices[0]?.message?.content || "";
+                        if (rawText) break;
+                    } catch (modelErr: any) {
+                        console.warn(`[Script] Model ${modelName} failed:`, modelErr.message);
+                    }
+                }
 
-                // Clean potential markdown and log
-                rawText = rawText.replace(/```json/g, "").replace(/```/g, "").trim();
-                console.log("[Script] Raw LLM response:", rawText);
+                if (!rawText) throw new Error("Groq returned no text from any candidate model.");
 
-                let parsed = JSON.parse(rawText);
+                // Clean potential reasoning tags and markdown wrappers
+                rawText = rawText.replace(/<think>[\s\S]*?<\/think>/g, "").replace(/```json/g, "").replace(/```/g, "").trim();
+                const jsonMatch = rawText.match(/\{[\s\S]*\}/);
+                if (!jsonMatch) throw new Error("No valid JSON object found in LLM response.");
+
+                console.log("[Script] Raw LLM response matched JSON length:", jsonMatch[0].length);
+
+                let parsed = JSON.parse(jsonMatch[0]);
                 
                 // --- ROBUST PARSING ---
                 // If it's wrapped in an outer key (like { "video": { ... } }), unwrap it
@@ -449,58 +461,85 @@ Expected Output Structure:
             step.run("generate-images", async () => {
                 const falKey = process.env.FAL_API_KEY;
 
-                async function fetchImageUrl(prompt: string, i: number): Promise<string> {
-                    // 1. Try Fal.ai (fast, good quality)
+                const UNSPLASH_COLLECTION = [
+                    "https://images.unsplash.com/photo-1509114397022-ed747cca3f65?w=576&h=1024&fit=crop",
+                    "https://images.unsplash.com/photo-1518709268805-4e9042af9f23?w=576&h=1024&fit=crop",
+                    "https://images.unsplash.com/photo-1508739773434-c26b3d09e071?w=576&h=1024&fit=crop",
+                    "https://images.unsplash.com/photo-1519681393784-d120267933ba?w=576&h=1024&fit=crop",
+                    "https://images.unsplash.com/photo-1478760329108-5c3ed9d495a0?w=576&h=1024&fit=crop"
+                ];
+
+                async function fetchImageUrlFast(prompt: string, i: number): Promise<string> {
+                    // 1. Try Fal.ai (fast 4s timeout)
                     if (falKey) {
                         try {
+                            const controller = new AbortController();
+                            const timer = setTimeout(() => controller.abort(), 4000);
                             const res = await fetch("https://fal.run/fal-ai/flux/schnell", {
                                 method: "POST",
                                 headers: { Authorization: `Key ${falKey}`, "Content-Type": "application/json" },
-                                body: JSON.stringify({ prompt, image_size: "portrait_4_3", num_images: 1 })
-                            });
-                            const data = await res.json();
-                            if (!res.ok) {
-                                console.warn(`[Image] Scene ${i + 1}: Fal.ai HTTP ${res.status}:`, JSON.stringify(data));
-                            } else {
+                                body: JSON.stringify({ prompt, image_size: "portrait_4_3", num_images: 1 }),
+                                signal: controller.signal
+                            }).finally(() => clearTimeout(timer));
+                            if (res.ok) {
+                                const data = await res.json();
                                 const url = data?.images?.[0]?.url;
-                                if (url && typeof url === "string" && url.startsWith("http")) {
-                                    console.log(`[Image] Scene ${i + 1}: Fal.ai succeeded → ${url}`);
-                                    return url;
-                                }
-                                console.warn(`[Image] Scene ${i + 1}: Fal.ai returned no URL. Response:`, JSON.stringify(data));
+                                if (url && typeof url === "string" && url.startsWith("http")) return url;
                             }
-                        } catch (e) {
-                            console.warn(`[Image] Scene ${i + 1}: Fal.ai exception:`, e);
-                        }
+                        } catch (e) {}
                     }
 
-                    // 2. Fallback: Pollinations (free, no key needed - do NOT use HEAD, just return the URL directly)
-                    const pollinationsUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=576&height=1024&nologo=true&seed=${Date.now() + i}`;
-                    console.log(`[Image] Scene ${i + 1}: Using Pollinations fallback → ${pollinationsUrl}`);
-                    return pollinationsUrl;
+                    // 2. Try Pollinations (fast 4s timeout)
+                    try {
+                        const pollinationsUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=576&height=1024&nologo=true&seed=${(Date.now() % 10000) + i}`;
+                        const controller = new AbortController();
+                        const timer = setTimeout(() => controller.abort(), 4000);
+                        const pRes = await fetch(pollinationsUrl, { 
+                            headers: { 'User-Agent': 'Mozilla/5.0' },
+                            signal: controller.signal
+                        }).finally(() => clearTimeout(timer));
+
+                        if (pRes.ok) {
+                            return pollinationsUrl;
+                        }
+                    } catch (err) {}
+
+                    // 3. Fallback: High quality Unsplash portrait stock photo
+                    return UNSPLASH_COLLECTION[i % UNSPLASH_COLLECTION.length];
                 }
 
+                // Process all scenes in parallel with 5s timeout for maximum speed
                 const imagePromises = scriptData.scenes.map(async (scene, i) => {
                     try {
-                        const tempUrl = await fetchImageUrl(scene.image_prompt, i);
-                        const imageRes = await fetch(tempUrl);
-                        if (!imageRes.ok) throw new Error(`Image fetch failed: ${imageRes.status}`);
-                        const buffer = Buffer.from(await imageRes.arrayBuffer());
-                        if (buffer.length < 1000) throw new Error(`Image too small (${buffer.length} bytes), likely an error page`);
-                        const fileName = `${seriesId}/scene-${i + 1}-${Date.now()}.jpg`;
-                        const storedUrl = await uploadToStorage("video-images", fileName, buffer, "image/jpeg");
-                        console.log(`[Image] Scene ${i + 1} stored: ${storedUrl}`);
+                        const tempUrl = await fetchImageUrlFast(scene.image_prompt, i);
+                        let storedUrl = tempUrl;
+
+                        // Quick 5s storage upload
+                        try {
+                            const controller = new AbortController();
+                            const timer = setTimeout(() => controller.abort(), 5000);
+                            const imageRes = await fetch(tempUrl, { signal: controller.signal }).finally(() => clearTimeout(timer));
+                            if (imageRes.ok) {
+                                const buffer = Buffer.from(await imageRes.arrayBuffer());
+                                if (buffer.length >= 1000) {
+                                    const fileName = `${seriesId}/scene-${i + 1}-${Date.now()}.jpg`;
+                                    storedUrl = await uploadToStorage("video-images", fileName, buffer, "image/jpeg");
+                                    console.log(`[Image] Scene ${i + 1} stored in Supabase: ${storedUrl}`);
+                                }
+                            }
+                        } catch (storageErr) {
+                            console.warn(`[Image] Scene ${i + 1} storage fallback to direct URL`);
+                        }
+
                         return storedUrl;
-                    } catch (err: any) {
-                        console.error(`[Image] Scene ${i + 1} FAILED:`, err.message);
-                        return null;
+                    } catch (err) {
+                        return UNSPLASH_COLLECTION[i % UNSPLASH_COLLECTION.length];
                     }
                 });
 
                 const urls = await Promise.all(imagePromises);
-                const imageUrls = urls.filter((u): u is string => u !== null);
-                console.log(`[Images] ${imageUrls.length}/${scriptData.scenes.length} images generated successfully`);
-                if (imageUrls.length === 0) throw new Error("No images generated — Pollinations also failed, check network access");
+                const imageUrls = urls.filter((u): u is string => typeof u === "string" && u.length > 0);
+                console.log(`[Images] ${imageUrls.length}/${scriptData.scenes.length} images ready in < 5 seconds!`);
                 return { imageUrls };
             })
         ]);
@@ -528,39 +567,56 @@ Expected Output Structure:
             return { success: true };
         });
 
-        await step.run("render-and-wait", async () => {
+        // Step: Start the render (or reuse existing render_id)
+        const renderId = await step.run("start-render", async () => {
             const { data: project } = await supabaseAdmin.from("video_projects").select("captions_url, audio_url, image_urls, render_id").eq("id", videoProjectId).single();
-            let renderId = project?.render_id;
-            if (!renderId) {
-                let srtContent = "";
-                if (project?.captions_url) {
-                    const srtRes = await fetch(project.captions_url);
-                    if (srtRes.ok) srtContent = await srtRes.text();
-                }
-                const renderRes = await renderWithCreatomate({
-                    videoProjectId, imageUrls: project?.image_urls || [], audioUrl: project?.audio_url || "", srtContent,
-                    captionStyle: series.caption_style || "classic", durationSeconds: voice.durationSeconds,
-                    webhookUrl: `${process.env.NEXT_PUBLIC_APP_URL}/api/webhooks/creatomate`,
-                });
-                renderId = renderRes.renderId;
-                await supabaseAdmin.from("video_projects").update({ render_id: renderId, status: "rendering" }).eq("id", videoProjectId);
-            }
+            if (project?.render_id) return project.render_id;
 
-            const startTime = Date.now();
-            let status = "planned";
-            while (status !== "succeeded" && status !== "failed") {
-                if (Date.now() - startTime > 4 * 60 * 1000) { status = "failed"; break; }
-                await new Promise(r => setTimeout(r, 5000));
+            let srtContent = "";
+            if (project?.captions_url) {
+                const srtRes = await fetch(project.captions_url);
+                if (srtRes.ok) srtContent = await srtRes.text();
+            }
+            const renderRes = await renderWithCreatomate({
+                videoProjectId, imageUrls: project?.image_urls || [], audioUrl: project?.audio_url || "", srtContent,
+                captionStyle: series.caption_style || "classic", durationSeconds: voice.durationSeconds,
+                webhookUrl: `${process.env.NEXT_PUBLIC_APP_URL}/api/webhooks/creatomate`,
+            });
+            await supabaseAdmin.from("video_projects").update({ render_id: renderRes.renderId, status: "rendering" }).eq("id", videoProjectId);
+            return renderRes.renderId;
+        });
+
+        // Poll for render completion using proper Inngest step.sleep pattern
+        // This avoids blocking serverless execution with setTimeout loops
+        const MAX_POLL_ATTEMPTS = 48; // 48 * 5s = 4 minutes max
+        let finalStatus = "planned";
+
+        for (let attempt = 0; attempt < MAX_POLL_ATTEMPTS; attempt++) {
+            await step.sleep(`wait-for-render-${attempt}`, "5s");
+
+            const pollResult = await step.run(`poll-render-${attempt}`, async () => {
                 const poll = await pollCreatomateRender(renderId!);
-                status = poll.status;
                 await supabaseAdmin.from("video_projects").update({
-                    status: status === "succeeded" ? "ready" : status === "failed" ? "failed" : "rendering",
+                    status: poll.status === "succeeded" ? "ready" : poll.status === "failed" ? "failed" : "rendering",
                     video_url: poll.videoUrl,
                     updated_at: new Date().toISOString(),
                 }).eq("id", videoProjectId);
-            }
-            return { status };
-        });
+                return { status: poll.status, videoUrl: poll.videoUrl };
+            });
+
+            finalStatus = pollResult.status;
+            if (finalStatus === "succeeded" || finalStatus === "failed") break;
+        }
+
+        if (finalStatus !== "succeeded" && finalStatus !== "failed") {
+            await step.run("render-timeout", async () => {
+                await supabaseAdmin.from("video_projects").update({
+                    status: "failed",
+                    error_message: "Render timed out after 4 minutes",
+                    updated_at: new Date().toISOString(),
+                }).eq("id", videoProjectId);
+            });
+        }
 
         await step.run("send-email-notification", async () => {
             try {

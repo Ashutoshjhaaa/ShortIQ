@@ -84,8 +84,8 @@ export function VideoPreviewModal({ video, isOpen, onClose }: VideoPreviewModalP
                                     setIsPlaying(true);
                                     setHasError(false);
                                 }}
-                                onError={(e) => {
-                                    console.error("Video element error:", e);
+                                onError={() => {
+                                    console.warn("Video element playback issue. Source may be expired or format unsupported.");
                                     setIsLoading(false);
                                     setHasError(true);
                                 }}

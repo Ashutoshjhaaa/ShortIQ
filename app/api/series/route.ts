@@ -17,13 +17,13 @@ export async function GET() {
             .order("created_at", { ascending: false });
 
         if (error) {
-            console.error("Error fetching series:", error);
-            return NextResponse.json({ error: error.message }, { status: 500 });
+            console.error("Error fetching series:", error.message);
+            return NextResponse.json([]);
         }
 
-        return NextResponse.json(series);
+        return NextResponse.json(series || []);
     } catch (err: any) {
-        console.error("API GET series failure:", err);
-        return NextResponse.json({ error: "Internal Server Error" }, { status: 500 });
+        console.error("API GET series failure:", err?.message || err);
+        return NextResponse.json([]);
     }
 }

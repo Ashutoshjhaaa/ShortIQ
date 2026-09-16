@@ -5,13 +5,33 @@ const nextConfig: NextConfig = {
     remotePatterns: [
       {
         protocol: "https",
-        hostname: "pdwwikkwsoxyzvpvxasz.supabase.co",
+        hostname: "*.supabase.co",
         pathname: "/storage/v1/object/public/**",
       },
       {
         protocol: "https",
         hostname: "etnpqxbrptcsuysktxcr.supabase.co",
-        pathname: "/storage/v1/object/public/**",
+        pathname: "/**",
+      },
+      {
+        protocol: "https",
+        hostname: "image.pollinations.ai",
+        pathname: "/**",
+      },
+      {
+        protocol: "https",
+        hostname: "*.fal.media",
+        pathname: "/**",
+      },
+      {
+        protocol: "https",
+        hostname: "fal.media",
+        pathname: "/**",
+      },
+      {
+        protocol: "https",
+        hostname: "images.unsplash.com",
+        pathname: "/**",
       },
     ],
   },

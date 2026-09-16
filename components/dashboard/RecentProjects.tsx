@@ -12,12 +12,14 @@ export function RecentProjects() {
     const fetchSeries = async () => {
         try {
             const res = await fetch("/api/series");
-            const data = await res.json();
-            if (Array.isArray(data)) {
-                setSeries(data);
+            if (res.ok) {
+                const data = await res.json().catch(() => []);
+                if (Array.isArray(data)) {
+                    setSeries(data);
+                }
             }
         } catch (error) {
-            console.error("Failed to fetch series:", error);
+            console.warn("Failed to fetch series:", error);
         } finally {
             setLoading(false);
         }

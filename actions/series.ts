@@ -19,11 +19,19 @@ export interface SeriesData {
     publishTime: string;
 }
 
+function parseErrorMessage(err: any, defaultMsg: string): string {
+    const msg = err?.message || String(err);
+    if (msg.includes("fetch failed") || msg.includes("Database timeout")) {
+        return "Database unreachable: Please unpause/restore your project on Supabase Dashboard.";
+    }
+    return msg || defaultMsg;
+}
+
 export async function createSeries(data: SeriesData) {
     const { userId } = await auth();
 
     if (!userId) {
-        throw new Error("Unauthorized");
+        return { success: false, error: "Unauthorized" };
     }
 
     try {
@@ -49,29 +57,33 @@ export async function createSeries(data: SeriesData) {
         }).select("id").single();
 
         if (error) {
-            console.error("Error creating series:", error);
-            throw new Error(`Failed to save series: ${error.message}`);
+            console.error("Error creating series:", error.message);
+            return { success: false, error: parseErrorMessage(error, "Failed to save series") };
         }
 
         // Trigger Inngest video generation immediately after series creation
         if (inserted?.id) {
-            await inngest.send({
-                name: "video/generate",
-                data: { seriesId: inserted.id },
-            });
+            try {
+                await inngest.send({
+                    name: "video/generate",
+                    data: { seriesId: inserted.id },
+                });
+            } catch (inngestErr: any) {
+                console.warn("Inngest send warning:", inngestErr?.message);
+            }
         }
 
         revalidatePath("/dashboard");
         return { success: true };
     } catch (err: any) {
         console.error("createSeries failure:", err);
-        return { success: false, error: err.message };
+        return { success: false, error: parseErrorMessage(err, "Failed to save series") };
     }
 }
 
 export async function updateSeries(id: string, data: Partial<SeriesData>) {
     const { userId } = await auth();
-    if (!userId) throw new Error("Unauthorized");
+    if (!userId) return { success: false, error: "Unauthorized" };
 
     try {
         const updatePayload: any = {
@@ -103,13 +115,13 @@ export async function updateSeries(id: string, data: Partial<SeriesData>) {
         return { success: true };
     } catch (err: any) {
         console.error("updateSeries failure:", err);
-        return { success: false, error: err.message };
+        return { success: false, error: parseErrorMessage(err, "Failed to update series") };
     }
 }
 
 export async function triggerVideoGeneration(seriesId: string) {
     const { userId } = await auth();
-    if (!userId) throw new Error("Unauthorized");
+    if (!userId) return { success: false, error: "Unauthorized" };
 
     try {
         await inngest.send({
@@ -119,13 +131,13 @@ export async function triggerVideoGeneration(seriesId: string) {
         return { success: true };
     } catch (err: any) {
         console.error("triggerVideoGeneration failure:", err);
-        return { success: false, error: err.message };
+        return { success: false, error: err.message || "Failed to trigger generation" };
     }
 }
 
 export async function fastTrackWorkflow(seriesId: string) {
     const { userId } = await auth();
-    if (!userId) throw new Error("Unauthorized");
+    if (!userId) return { success: false, error: "Unauthorized" };
 
     try {
         await inngest.send({
@@ -135,13 +147,13 @@ export async function fastTrackWorkflow(seriesId: string) {
         return { success: true };
     } catch (err: any) {
         console.error("fastTrackWorkflow failure:", err);
-        return { success: false, error: err.message };
+        return { success: false, error: err.message || "Failed to fast track workflow" };
     }
 }
 
 export async function deleteSeries(id: string) {
     const { userId } = await auth();
-    if (!userId) throw new Error("Unauthorized");
+    if (!userId) return { success: false, error: "Unauthorized" };
 
     try {
         const { error } = await supabaseAdmin
@@ -155,13 +167,13 @@ export async function deleteSeries(id: string) {
         return { success: true };
     } catch (err: any) {
         console.error("deleteSeries failure:", err);
-        return { success: false, error: err.message };
+        return { success: false, error: parseErrorMessage(err, "Failed to delete series") };
     }
 }
 
 export async function toggleSeriesStatus(id: string, currentStatus: string) {
     const { userId } = await auth();
-    if (!userId) throw new Error("Unauthorized");
+    if (!userId) return { success: false, error: "Unauthorized" };
 
     const newStatus = currentStatus === "paused" ? "active" : "paused";
 
@@ -177,14 +189,14 @@ export async function toggleSeriesStatus(id: string, currentStatus: string) {
         return { success: true, newStatus };
     } catch (err: any) {
         console.error("toggleSeriesStatus failure:", err);
-        return { success: false, error: err.message };
+        return { success: false, error: parseErrorMessage(err, "Failed to toggle series status") };
     }
 }
 
 export async function getSeriesById(id: string) {
     const { userId } = await auth();
     if (!userId) {
-        throw new Error("Unauthorized");
+        return { success: false, error: "Unauthorized", data: null };
     }
 
     try {
@@ -196,8 +208,8 @@ export async function getSeriesById(id: string) {
             .single();
 
         if (error) {
-            console.error("Error fetching series by ID:", error);
-            throw new Error(`Failed to fetch series: ${error.message}`);
+            console.error("Error fetching series by ID:", error.message);
+            return { success: false, error: parseErrorMessage(error, "Failed to fetch series"), data: null };
         }
 
         return {
@@ -218,6 +230,6 @@ export async function getSeriesById(id: string) {
         };
     } catch (err: any) {
         console.error("getSeriesById failure:", err);
-        return { success: false, error: err.message };
+        return { success: false, error: parseErrorMessage(err, "Failed to fetch series"), data: null };
     }
 }

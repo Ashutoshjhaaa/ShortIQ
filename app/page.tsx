@@ -15,7 +15,7 @@ export default function Home() {
     <div className="shortiq-root transition-colors duration-500">
       <FloatingOrbs />
       <Navbar />
-      <main>
+      <main className="relative z-10 bg-background shadow-2xl rounded-b-3xl">
         <HeroSection />
         <PlatformsSection />
         <DashboardPreview />

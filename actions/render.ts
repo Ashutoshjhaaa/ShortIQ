@@ -1,6 +1,5 @@
 "use server";
 
-import { auth } from "@/lib/clerk-server";
 import { supabaseAdmin } from "@/lib/supabase";
 
 export interface CreatomateRenderProps {

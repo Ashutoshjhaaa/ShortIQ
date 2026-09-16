@@ -6,6 +6,8 @@
  *
  * - Indian languages → Sarvam AI API
  * - Foreign languages → Deepgram API
+ *
+ * Includes in-memory rate limiting (10 requests per minute per IP)
  */
 
 import { NextRequest, NextResponse } from "next/server";
@@ -13,6 +15,38 @@ import { getProvider, LANGUAGE_CODES } from "@/lib/voice-config";
 
 const DEEPGRAM_API_KEY = process.env.DEEPGRAM_API_KEY || "";
 const SARVAM_API_KEY = process.env.SARVAM_API_KEY || "";
+
+// ── Simple in-memory rate limiter ─────────────────────────────────────
+const RATE_LIMIT_WINDOW_MS = 60 * 1000; // 1 minute
+const RATE_LIMIT_MAX_REQUESTS = 10;      // 10 requests per window
+
+const rateLimitMap = new Map<string, { count: number; resetAt: number }>();
+
+function isRateLimited(ip: string): boolean {
+    const now = Date.now();
+    const entry = rateLimitMap.get(ip);
+
+    if (!entry || now > entry.resetAt) {
+        rateLimitMap.set(ip, { count: 1, resetAt: now + RATE_LIMIT_WINDOW_MS });
+        return false;
+    }
+
+    entry.count++;
+    if (entry.count > RATE_LIMIT_MAX_REQUESTS) {
+        return true;
+    }
+    return false;
+}
+
+// Periodically clean up stale entries to prevent memory leaks
+setInterval(() => {
+    const now = Date.now();
+    for (const [key, value] of rateLimitMap.entries()) {
+        if (now > value.resetAt) {
+            rateLimitMap.delete(key);
+        }
+    }
+}, 5 * 60 * 1000); // Clean up every 5 minutes
 
 // Default preview text per language
 const DEFAULT_PREVIEW_TEXT: Record<string, string> = {
@@ -34,6 +68,18 @@ const DEFAULT_PREVIEW_TEXT: Record<string, string> = {
 };
 
 export async function GET(request: NextRequest) {
+    // Rate limiting
+    const ip = request.headers.get("x-forwarded-for")?.split(",")[0]?.trim()
+        || request.headers.get("x-real-ip")
+        || "unknown";
+
+    if (isRateLimited(ip)) {
+        return NextResponse.json(
+            { error: "Too many requests. Please try again later." },
+            { status: 429, headers: { "Retry-After": "60" } }
+        );
+    }
+
     const { searchParams } = new URL(request.url);
     const voice = searchParams.get("voice");
     const language = searchParams.get("language");

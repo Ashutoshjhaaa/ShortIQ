@@ -67,11 +67,62 @@ CREATE TABLE IF NOT EXISTS public.video_projects (
     updated_at TIMESTAMPTZ DEFAULT now()
 );
 
--- Enable RLS on all tables
+-- ═══════════════════════════════════════════════════════════════════════
+-- Enable RLS on ALL tables
+-- ═══════════════════════════════════════════════════════════════════════
+ALTER TABLE public.profiles ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.social_accounts ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.series ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.video_projects ENABLE ROW LEVEL SECURITY;
 
--- Note: Since we are using Clerk for Auth and Supabase for DB, 
--- RLS policies are bypassed when using the Supabase Service Role Key.
+-- ═══════════════════════════════════════════════════════════════════════
+-- RLS Policies
+-- Since Clerk is used for auth (not Supabase Auth), the service_role key
+-- bypasses RLS for server-side operations. These policies protect against
+-- direct access via the anon key.
+-- ═══════════════════════════════════════════════════════════════════════
 
+-- Profiles: No anon access (managed by service_role via webhooks/actions)
+CREATE POLICY "Deny all anon access to profiles"
+    ON public.profiles FOR ALL
+    USING (false);
+
+-- Social Accounts: No anon access
+CREATE POLICY "Deny all anon access to social_accounts"
+    ON public.social_accounts FOR ALL
+    USING (false);
+
+-- Series: No anon access
+CREATE POLICY "Deny all anon access to series"
+    ON public.series FOR ALL
+    USING (false);
+
+-- Video Projects: No anon access
+CREATE POLICY "Deny all anon access to video_projects"
+    ON public.video_projects FOR ALL
+    USING (false);
+
+-- ═══════════════════════════════════════════════════════════════════════
+-- Auto-update `updated_at` trigger
+-- ═══════════════════════════════════════════════════════════════════════
+
+CREATE OR REPLACE FUNCTION public.handle_updated_at()
+RETURNS TRIGGER AS $$
+BEGIN
+    NEW.updated_at = now();
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Apply trigger to all tables with updated_at
+CREATE TRIGGER set_updated_at_profiles
+    BEFORE UPDATE ON public.profiles
+    FOR EACH ROW EXECUTE FUNCTION public.handle_updated_at();
+
+CREATE TRIGGER set_updated_at_series
+    BEFORE UPDATE ON public.series
+    FOR EACH ROW EXECUTE FUNCTION public.handle_updated_at();
+
+CREATE TRIGGER set_updated_at_video_projects
+    BEFORE UPDATE ON public.video_projects
+    FOR EACH ROW EXECUTE FUNCTION public.handle_updated_at();
